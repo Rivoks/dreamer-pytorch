@@ -1,16 +1,16 @@
 algorithm: dreamer-v1
 operation:
   save: False
-  log_dir: atari-boxing-v4
-  device: cpu
+  log_dir: atari-boxing-v5
+  device: mps
 environment:
   benchmark: atari
-  task_name: Boxing-v4
+  task_name: ALE/Boxing-v5
   seed: 0
   height: 64
   width: 64
   frame_skip: 4
-  pixel_norm: True
+  pixel_norm: False
 parameters:
   dreamer:
     train_iterations: 1000

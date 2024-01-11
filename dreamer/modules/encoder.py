@@ -48,4 +48,14 @@ class Encoder(nn.Module):
         self.network.apply(initialize_weights)
 
     def forward(self, x):
-        return horizontal_forward(self.network, x, input_shape=self.observation_shape)
+        if torch.isnan(x).any():
+            print("forward x:", torch.isnan(x).any())
+            # x = x.reshape(-1, *self.observation_shape)
+        
+
+        res = horizontal_forward(self.network, x, input_shape=self.observation_shape)
+
+        if torch.isnan(res).any():
+            print("forward res:", torch.isnan(res).any())
+
+        return res

@@ -16,6 +16,9 @@ import yaml
 from attrdict import AttrDict
 
 def horizontal_forward(network, x, y=None, input_shape=(-1,), output_shape=(-1,)):
+
+
+
     batch_with_horizon_shape = x.shape[: -len(input_shape)]
     if not batch_with_horizon_shape:
         batch_with_horizon_shape = (1,)
@@ -24,6 +27,9 @@ def horizontal_forward(network, x, y=None, input_shape=(-1,), output_shape=(-1,)
         input_shape = (x.shape[-1],)  #
     x = x.reshape(-1, *input_shape)
     x = network(x)
+
+    if torch.isnan(x).any():
+        print("horizontal_forward x:", torch.isnan(x).any())
 
     x = x.reshape(*batch_with_horizon_shape, *output_shape)
     return x
@@ -65,6 +71,7 @@ def create_normal_dist(
     activation=None,
     event_shape=None,
 ):
+    
     if std == None:
         mean, std = torch.chunk(x, 2, -1)
         mean = mean / mean_scale
@@ -72,6 +79,9 @@ def create_normal_dist(
             mean = activation(mean)
         mean = mean_scale * mean
         std = F.softplus(std + init_std) + min_std
+
+        # print("std", std)
+
     else:
         mean = x
     dist = torch.distributions.Normal(mean, std)

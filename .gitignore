@@ -1,4 +1,5 @@
 .idea
 venv
 runs
+output
 __pycache__
