@@ -13,13 +13,11 @@ class ReplayBuffer(object):
         self.device = device
         self.capacity = int(self.config.capacity)
 
-        state_type = np.uint8 if len(observation_shape) < 3 else np.float32
-
         self.observation = np.empty(
-            (self.capacity, *observation_shape), dtype=state_type
+            (self.capacity, *observation_shape), dtype=np.float32
         )
         self.next_observation = np.empty(
-            (self.capacity, *observation_shape), dtype=state_type
+            (self.capacity, *observation_shape), dtype=np.float32
         )
         self.action = np.empty((self.capacity, action_size), dtype=np.float32)
         self.reward = np.empty((self.capacity, 1), dtype=np.float32)
@@ -46,12 +44,11 @@ class ReplayBuffer(object):
         (batch_size, chunk_size, input_size)
         """
         last_filled_index = self.buffer_index - chunk_size + 1
-        assert self.full or (
-            last_filled_index > batch_size
-        ), "too short dataset or too long chunk_size"
+
         sample_index = np.random.randint(
             0, self.capacity if self.full else last_filled_index, batch_size
         ).reshape(-1, 1)
+
         chunk_length = np.arange(chunk_size).reshape(1, -1)
 
         sample_index = (sample_index + chunk_length) % self.capacity
@@ -59,6 +56,7 @@ class ReplayBuffer(object):
         observation = torch.as_tensor(
             self.observation[sample_index], device=self.device
         ).float()
+
         next_observation = torch.as_tensor(
             self.next_observation[sample_index], device=self.device
         ).float()
