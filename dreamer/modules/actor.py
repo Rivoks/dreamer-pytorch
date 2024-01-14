@@ -6,37 +6,38 @@ from dreamer.utils.utils import create_normal_dist, build_network
 
 
 class Actor(nn.Module):
-    def __init__(self, discrete_action_bool, action_size, config):
+    def __init__(self, action_size, config):
         super().__init__()
         self.config = config.parameters.dreamer.agent.actor
-        self.discrete_action_bool = discrete_action_bool
         self.stochastic_size = config.parameters.dreamer.stochastic_size
         self.deterministic_size = config.parameters.dreamer.deterministic_size
 
-        action_size = action_size if discrete_action_bool else 2 * action_size
-
-        self.network = build_network(
-            self.stochastic_size + self.deterministic_size,
-            self.config.hidden_size,
-            self.config.num_layers,
-            self.config.activation,
-            action_size,
+        self.network = nn.Sequential(
+            nn.Linear(
+                self.stochastic_size + self.deterministic_size, self.config.hidden_size
+            ),
+            nn.ELU(),
+            nn.Linear(self.config.hidden_size, self.config.hidden_size),
+            nn.ELU(),
+            nn.Linear(self.config.hidden_size, action_size),
         )
 
     def forward(self, posterior, deterministic):
+        # On concatène l'état stochastique et l'état déterministe
         x = torch.cat((posterior, deterministic), -1)
+
+        # On passe l'entrée dans le réseau de neurones
         x = self.network(x)
-        if self.discrete_action_bool:
-            dist = torch.distributions.OneHotCategorical(logits=x)
-            action = dist.sample() + dist.probs - dist.probs.detach()
-        else:
-            dist = create_normal_dist(
-                x,
-                mean_scale=self.config.mean_scale,
-                init_std=self.config.init_std,
-                min_std=self.config.min_std,
-                activation=torch.tanh,
-            )
-            dist = torch.distributions.TransformedDistribution(dist, TanhTransform())
-            action = torch.distributions.Independent(dist, 1).rsample()
+
+        # Distribution catégorielle pour sélectionner une action dans un contexte discret
+        # logits: score non normalisé
+        dist = torch.distributions.OneHotCategorical(logits=x)
+
+        # Pour conserver le calcul du gradient lors de la backpropagation
+        dist_probs = dist.probs - dist.probs.detach()
+
+        # Créer un gradient qui reflète la probabilité de l'action échantillonnée
+        # tout en conservant la différentiabilité pour l'entraînement
+        action = dist.sample() + dist_probs
+
         return action

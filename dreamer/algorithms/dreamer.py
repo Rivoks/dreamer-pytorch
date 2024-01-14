@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-from dreamer.modules.model import RSSM, RewardModel, ContinueModel
+from dreamer.modules.model import RSSM, RewardModel
 from dreamer.modules.encoder import Encoder
 from dreamer.modules.decoder import Decoder
 from dreamer.modules.actor import Actor
@@ -21,23 +21,18 @@ class Dreamer:
     def __init__(
         self,
         observation_shape,
-        discrete_action_bool,
         action_size,
-        writer,
         device,
         config,
     ):
         self.device = device
         self.action_size = action_size
-        self.discrete_action_bool = discrete_action_bool
 
         self.encoder = Encoder(observation_shape, config).to(self.device)
         self.decoder = Decoder(observation_shape, config).to(self.device)
         self.rssm = RSSM(action_size, config).to(self.device)
         self.reward_predictor = RewardModel(config).to(self.device)
-        if config.parameters.dreamer.use_continue_flag:
-            self.continue_predictor = ContinueModel(config).to(self.device)
-        self.actor = Actor(discrete_action_bool, action_size, config).to(self.device)
+        self.actor = Actor(action_size, config).to(self.device)
         self.critic = Critic(config).to(self.device)
 
         self.buffer = ReplayBuffer(observation_shape, action_size, self.device, config)
@@ -70,7 +65,6 @@ class Dreamer:
         self.dynamic_learning_infos = DynamicInfos(self.device)
         self.behavior_learning_infos = DynamicInfos(self.device)
 
-        self.writer = writer
         self.num_total_episode = 0
 
     def train(self, env):
@@ -90,7 +84,6 @@ class Dreamer:
                     self.config.batch_size, self.config.batch_length
                 )
 
-
                 posteriors, deterministics, model_loss = self.dynamic_learning(data)
                 collection_loss += model_loss
 
@@ -99,12 +92,12 @@ class Dreamer:
             self.environment_interaction(env, self.config.num_interaction_episodes)
             self.evaluate(env)
 
-            print(f"[{(time.time() - start_time).__round__(1)}s] Collection loss : {collection_loss / self.config.collect_interval}")
+            print(
+                f"[{(time.time() - start_time).__round__(1)}s] Collection loss : {collection_loss / self.config.collect_interval}"
+            )
 
-
-        print("training time : ", time.time() - total_start_time)
+        print(f"training time : {(time.time() - total_start_time).__round__(1)}s")
         self.save()
-
 
     def evaluate(self, env):
         # print("start evaluation...")
@@ -282,7 +275,9 @@ class Dreamer:
             self.config.save_path,
         )
 
-    def load(self, ):
+    def load(
+        self,
+    ):
         checkpoint = torch.load(self.config.save_path)
         self.encoder.load_state_dict(checkpoint["encoder"])
         self.decoder.load_state_dict(checkpoint["decoder"])
@@ -310,9 +305,7 @@ class Dreamer:
         while not done:
             env.render()
 
-            deterministic = self.rssm.recurrent_model(
-                posterior, action, deterministic
-            )
+            deterministic = self.rssm.recurrent_model(posterior, action, deterministic)
             embedded_observation = embedded_observation.reshape(1, -1)
 
             _, posterior = self.rssm.representation_model(
@@ -320,26 +313,21 @@ class Dreamer:
             )
             action = self.actor(posterior, deterministic).detach()
 
-            if self.discrete_action_bool:
-                buffer_action = action.cpu().numpy()
-                env_action = buffer_action.argmax()
-
-            else:
-                buffer_action = action.cpu().numpy()[0]
-                env_action = buffer_action
+            buffer_action = action.cpu().numpy()
+            env_action = buffer_action.argmax()
 
             next_observation, reward, done, info = env.step(env_action)
-            
+
             score += reward
             embedded_observation = self.encoder(
                 torch.from_numpy(next_observation).float().to(self.device)
             )
 
-            done = done or info['flag_get'] or info['time'] == 0 or info['life'] == 0
+            done = done or info["flag_get"] or info["time"] == 0 or info["life"] == 0
             if done:
                 break
-            
-        # print("score :", score)         
+
+        # print("score :", score)
 
     @torch.no_grad()
     def environment_interaction(self, env, num_interaction_episodes, train=True):
@@ -356,7 +344,7 @@ class Dreamer:
             score_lst = np.array([])
             done = False
 
-            while not done:            
+            while not done:
                 deterministic = self.rssm.recurrent_model(
                     posterior, action, deterministic
                 )
@@ -367,13 +355,8 @@ class Dreamer:
                 )
                 action = self.actor(posterior, deterministic).detach()
 
-                if self.discrete_action_bool:
-                    buffer_action = action.cpu().numpy()
-                    env_action = buffer_action.argmax()
-
-                else:
-                    buffer_action = action.cpu().numpy()[0]
-                    env_action = buffer_action
+                buffer_action = action.cpu().numpy()
+                env_action = buffer_action.argmax()
 
                 next_observation, reward, done, info = env.step(env_action)
 
@@ -381,27 +364,24 @@ class Dreamer:
                     self.buffer.add(
                         observation, buffer_action, reward, next_observation, done
                     )
-                
+
                 score += reward
                 embedded_observation = self.encoder(
                     torch.from_numpy(next_observation).float().to(self.device)
                 )
                 observation = next_observation
 
-                done = done or info['flag_get'] or info['time'] == 0 or info['life'] == 0
+                done = (
+                    done or info["flag_get"] or info["time"] == 0 or info["life"] == 0
+                )
 
                 if done:
                     if train:
                         self.num_total_episode += 1
-                        self.writer.add_scalar(
-                            "training score", score, self.num_total_episode
-                        )
                     else:
                         score_lst = np.append(score_lst, score)
                     break
-        
-        
+
         if not train:
             evaluate_score = score_lst.mean()
-            # print("evaluate score :", evaluate_score)
-            self.writer.add_scalar("test score", evaluate_score, self.num_total_episode)
+            print("evaluate score :", evaluate_score)

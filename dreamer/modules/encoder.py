@@ -1,9 +1,6 @@
-import torch
 import torch.nn as nn
-
 from dreamer.utils.utils import (
     initialize_weights,
-    horizontal_forward,
 )
 
 
@@ -12,19 +9,19 @@ class Encoder(nn.Module):
         super().__init__()
         self.config = config.parameters.dreamer.encoder
 
-        activation = getattr(nn, self.config.activation)()
+        activation = nn.ReLU()
         self.observation_shape = observation_shape
 
         self.network = nn.Sequential(
             nn.Conv2d(
                 self.observation_shape[0],
-                self.config.depth * 1,
+                self.config.depth,
                 self.config.kernel_size,
                 self.config.stride,
             ),
             activation,
             nn.Conv2d(
-                self.config.depth * 1,
+                self.config.depth,
                 self.config.depth * 2,
                 self.config.kernel_size,
                 self.config.stride,
@@ -45,17 +42,24 @@ class Encoder(nn.Module):
             ),
             activation,
         )
+
         self.network.apply(initialize_weights)
 
     def forward(self, x):
-        if torch.isnan(x).any():
-            print("forward x:", torch.isnan(x).any())
-            # x = x.reshape(-1, *self.observation_shape)
-        
+        input_shape = self.observation_shape  # Récupère la forme de l'observation
+        batch_with_horizon_shape = x.shape[
+            : -len(input_shape)
+        ]  # Conserve la forme du batch et de l'horizon
 
-        res = horizontal_forward(self.network, x, input_shape=self.observation_shape)
+        if not batch_with_horizon_shape:
+            batch_with_horizon_shape = (
+                1,
+            )  # Assigne 1 si aucune forme de batch/horizon
 
-        if torch.isnan(res).any():
-            print("forward res:", torch.isnan(res).any())
+        x = x.reshape(-1, *input_shape)  # Redimensionne pour appliquer le réseau
+        x = self.network(x)  # Passe à travers le réseau de l'encodeur
+        x = x.reshape(
+            *batch_with_horizon_shape, *(-1,)
+        )  # Restaure la forme du batch/horizon
 
-        return res
+        return x  # Renvoie le résultat

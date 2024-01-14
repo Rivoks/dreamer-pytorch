@@ -42,19 +42,6 @@ def make_atari_env(task_name, skip_frame, width, height, seed, pixel_norm=True):
     env.seed(seed)
     return env
 
-def make_mario_env(task_name, skip_frame, width, height, seed, pixel_norm=True):
-    env = gym.make(task_name)
-    env = gym.wrappers.ResizeObservation(env, (height, width))
-    env = JoypadSpace(env, SIMPLE_MOVEMENT)
-    env = ChannelFirstEnv(env)
-    env = SkipFrame(env, skip_frame)
-
-    if pixel_norm:
-        env = PixelNormalization(env)
-
-    env.seed(seed)
-    return env
-
 
 def get_env_infos(env):
     obs_shape = env.observation_space.shape

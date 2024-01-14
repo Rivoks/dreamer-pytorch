@@ -15,7 +15,7 @@ class OneStepModel(nn.Module):
         """
         super().__init__()
         self.config = config.parameters.plan2explore.one_step_model
-        self.embedded_state_size = config.parameters.dreamer.embedded_state_size
+        self.stochastic_state_size = config.parameters.dreamer.stochastic_state_size
         self.stochastic_size = config.parameters.dreamer.stochastic_size
         self.deterministic_size = config.parameters.dreamer.deterministic_size
 
@@ -26,7 +26,7 @@ class OneStepModel(nn.Module):
             self.config.hidden_size,
             self.config.num_layers,
             self.config.activation,
-            self.embedded_state_size,
+            self.stochastic_state_size,
         )
 
     def forward(self, action, stochastic, deterministic):
@@ -35,7 +35,7 @@ class OneStepModel(nn.Module):
             self.network,
             action,
             stoch_deter,
-            output_shape=(self.embedded_state_size,),
+            output_shape=(self.stochastic_state_size,),
         )
         dist = create_normal_dist(x, std=1, event_shape=1)
         return dist

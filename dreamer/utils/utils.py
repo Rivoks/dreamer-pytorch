@@ -16,21 +16,16 @@ import yaml
 from attrdict import AttrDict
 
 def horizontal_forward(network, x, y=None, input_shape=(-1,), output_shape=(-1,)):
+    batch_with_horizon_shape = x.shape[: -len(input_shape)] # (batch_size, horizon_length, ...)
 
-
-
-    batch_with_horizon_shape = x.shape[: -len(input_shape)]
     if not batch_with_horizon_shape:
         batch_with_horizon_shape = (1,)
     if y is not None:
         x = torch.cat((x, y), -1)
-        input_shape = (x.shape[-1],)  #
+        input_shape = (x.shape[-1],)  
+
     x = x.reshape(-1, *input_shape)
     x = network(x)
-
-    if torch.isnan(x).any():
-        print("horizontal_forward x:", torch.isnan(x).any())
-
     x = x.reshape(*batch_with_horizon_shape, *output_shape)
     return x
 

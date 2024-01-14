@@ -36,7 +36,7 @@ parameters:
 
     deterministic_size: 600
     stochastic_size: 600
-    embedded_state_size: 1024
+    stochastic_state_size: 1024
     buffer:
       capacity: 5000000
 

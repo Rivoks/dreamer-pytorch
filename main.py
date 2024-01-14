@@ -3,70 +3,38 @@ import os
 os.environ["MUJOCO_GL"] = "egl"
 
 import argparse
-from datetime import datetime
-from torch.utils.tensorboard import SummaryWriter
+import gym
 
+from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
+from nes_py.wrappers import JoypadSpace
+
+from dreamer.envs.wrappers import *
 from dreamer.algorithms.dreamer import Dreamer
-from dreamer.algorithms.plan2explore import Plan2Explore
-from dreamer.utils.utils import load_config, get_base_directory
-from dreamer.envs.envs import make_dmc_env, make_atari_env, make_mario_env, get_env_infos
+from dreamer.utils.utils import load_config
 
 
 def main(args):
     config = load_config(args.config)
 
-    if config.environment.benchmark == "atari":
-        env = make_atari_env(
-            task_name=config.environment.task_name,
-            seed=config.environment.seed,
-            height=config.environment.height,
-            width=config.environment.width,
-            skip_frame=config.environment.frame_skip,
-            pixel_norm=config.environment.pixel_norm,
-        )
-    elif config.environment.benchmark == "dmc":
-        env = make_dmc_env(
-            domain_name=config.environment.domain_name,
-            task_name=config.environment.task_name,
-            seed=config.environment.seed,
-            visualize_reward=config.environment.visualize_reward,
-            from_pixels=config.environment.from_pixels,
-            height=config.environment.height,
-            width=config.environment.width,
-            frame_skip=config.environment.frame_skip,
-            pixel_norm=config.environment.pixel_norm,
-        )
-
-    elif config.environment.benchmark == "mario":
-        env = make_mario_env(
-            task_name=config.environment.task_name,
-            height=config.environment.height,
-            width=config.environment.width,
-            skip_frame=config.environment.frame_skip,
-            seed=config.environment.seed,
-            pixel_norm=config.environment.pixel_norm,
-        )
-
-    obs_shape, discrete_action_bool, action_size = get_env_infos(env)
-
-    log_dir = (
-        get_base_directory()
-        + "/runs/"
-        + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        + "_"
-        + config.operation.log_dir
+    env = gym.make(config.environment.task_name)
+    env = gym.wrappers.ResizeObservation(
+        env, (config.environment.height, config.environment.width)
     )
-    writer = SummaryWriter(log_dir)
+    env = JoypadSpace(env, SIMPLE_MOVEMENT)
+    env = ChannelFirstEnv(env)
+
+    # env = SkipFrame(env, skip_frame)
+    # if pixel_norm:
+    #     env = PixelNormalization(env)
+
+    env.seed(config.environment.seed)
+
+    observation_shape = env.observation_space.shape
+    action_size = env.action_space.n
+
     device = config.operation.device
 
-    if config.algorithm == "dreamer-v1":
-        agent = Dreamer(
-            obs_shape, discrete_action_bool, action_size, writer, device, config
-        )
-    elif config.algorithm == "plan2explore":
-        agent = Plan2Explore(
-            obs_shape, discrete_action_bool, action_size, writer, device, config
-        )
+    agent = Dreamer(observation_shape, action_size, device, config)
 
     if args.evaluate:
         agent.load()
@@ -86,7 +54,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-e",
         "--evaluate",
-        action='store_true',
+        action="store_true",
         help="Evaluate the model with trained weights",
     )
     args = parser.parse_args()
