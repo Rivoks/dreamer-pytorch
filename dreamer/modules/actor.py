@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-from torch.distributions import TanhTransform
-
-from dreamer.utils.utils import create_normal_dist, build_network
 
 
 class Actor(nn.Module):
