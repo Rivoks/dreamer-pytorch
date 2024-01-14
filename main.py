@@ -23,9 +23,8 @@ def main(args):
     env = JoypadSpace(env, SIMPLE_MOVEMENT)
     env = ChannelFirstEnv(env)
 
-    # env = SkipFrame(env, skip_frame)
-    # if pixel_norm:
-    #     env = PixelNormalization(env)
+    env = SkipFrame(env, 1)
+    env = PixelNormalization(env)
 
     env.seed(config.environment.seed)
 
