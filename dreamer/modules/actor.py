@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from dreamer.utils.utils import initialize_weights, create_normal_dist
+from torch.distributions import TanhTransform
 
 
 class Actor(nn.Module):
@@ -19,9 +21,9 @@ class Actor(nn.Module):
             nn.Linear(self.config.hidden_size, action_size),
         )
 
-    def forward(self, posterior, deterministic):
+    def forward(self, stochastic, deterministic):
         # On concatène l'état stochastique et l'état déterministe
-        x = torch.cat((posterior, deterministic), -1)
+        x = torch.cat((stochastic, deterministic), -1)
 
         # On passe l'entrée dans le réseau de neurones
         x = self.network(x)

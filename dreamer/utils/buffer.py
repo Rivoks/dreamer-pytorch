@@ -40,19 +40,21 @@ class ReplayBuffer(object):
         self.full = self.full or self.buffer_index == 0
 
     def sample(self, batch_size, chunk_size):
-        """
-        (batch_size, chunk_size, input_size)
-        """
+        # Calcul de l'index du dernier élément rempli dans le buffer
         last_filled_index = self.buffer_index - chunk_size + 1
 
-        sample_index = np.random.randint(
-            0, self.capacity if self.full else last_filled_index, batch_size
-        ).reshape(-1, 1)
+        # Génération aléatoire des indices de départ pour chaque échantillon
+        sample_index = np.random.randint(0, last_filled_index, batch_size).reshape(
+            -1, 1
+        )
 
+        # Création d'un tableau pour représenter la longueur de chaque chunk
         chunk_length = np.arange(chunk_size).reshape(1, -1)
 
+        # Calcul des indices réels à échantillonner dans le buffer
         sample_index = (sample_index + chunk_length) % self.capacity
 
+        # Extraction des échantillons du buffer et conversion en tenseurs Torch
         observation = torch.as_tensor(
             self.observation[sample_index], device=self.device
         ).float()
@@ -65,6 +67,7 @@ class ReplayBuffer(object):
         reward = torch.as_tensor(self.reward[sample_index], device=self.device)
         done = torch.as_tensor(self.done[sample_index], device=self.device)
 
+        # Création d'un dictionnaire avec les échantillons pour un accès facile
         sample = AttrDict(
             {
                 "observation": observation,

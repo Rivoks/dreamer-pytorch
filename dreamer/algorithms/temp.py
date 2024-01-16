@@ -2,14 +2,15 @@ import torch
 import torch.nn as nn
 import numpy as np
 import time
-from dreamer.modules.rssm import RSSM
+import matplotlib.pyplot as plt
+from dreamer.modules.rssm import RSSM, RewardModel
 from dreamer.modules.encoder import Encoder
 from dreamer.modules.decoder import Decoder
 from dreamer.modules.actor import Actor
 from dreamer.modules.critic import Critic
-from dreamer.modules.reward import RewardModel
 
 from dreamer.utils.utils import (
+    compute_lambda_values,
     create_normal_dist,
     DynamicInfos,
 )
@@ -46,6 +47,8 @@ class Dreamer:
             + list(self.rssm.parameters())
             + list(self.reward_predictor.parameters())
         )
+        if self.config.use_continue_flag:
+            self.model_params += list(self.continue_predictor.parameters())
 
         self.model_optimizer = torch.optim.Adam(
             self.model_params, lr=self.config.model_learning_rate
@@ -74,12 +77,12 @@ class Dreamer:
 
             for _ in range(self.config.collect_interval):
                 # Extraire des échantillons du buffer
-                samples = self.buffer.sample(
+                data = self.buffer.sample(
                     self.config.batch_size, self.config.batch_length
                 )
 
                 # Apprentissage dynamique avec les données échantillonnées
-                stochastic, deterministics, model_loss = self.dynamic_learning(samples)
+                stochastic, deterministics, model_loss = self.dynamic_learning(data)
                 collection_loss += model_loss
 
                 # Apprentissage comportemental
@@ -121,56 +124,56 @@ class Dreamer:
             )
 
             # Modèle de transition pour prédire le prochain état stochastique
-            prior_dist, stochastic = self.rssm.transition_model(deterministic)
+            stochastic_dist, stochastic = self.rssm.transition_model(deterministic)
 
             # Modèle de représentation pour prédire l'état stochastique à partir de l'observation encodée
-            stochastic_dist, stochastic = self.rssm.representation_model(
+            posterior_dist, posterior = self.rssm.representation_model(
                 data.embedded_observation[:, t], deterministic
             )
 
             # Enregistrement des informations pour l'apprentissage
             self.dynamic_learning_infos.append(
                 priors=stochastic,
-                prior_dist_means=prior_dist.mean,
-                prior_dist_stds=prior_dist.scale,
-                stochastics=stochastic,
                 stochastic_dist_means=stochastic_dist.mean,
                 stochastic_dist_stds=stochastic_dist.scale,
+                posteriors=posterior,
+                posterior_dist_means=posterior_dist.mean,
+                posterior_dist_stds=posterior_dist.scale,
                 deterministics=deterministic,
             )
 
-            stochastic = stochastic
+            stochastic = posterior
 
         # Compilation des informations et mise à jour du modèle
         infos = self.dynamic_learning_infos.get_stacked()
         model_loss = self._model_update(data, infos)
-        return infos.stochastics.detach(), infos.deterministics.detach(), model_loss
+        return infos.posteriors.detach(), infos.deterministics.detach(), model_loss
 
-    def _model_update(self, data, stochastic_info):
+    def _model_update(self, data, posterior_info):
         reconstructed_observation_dist = self.decoder(
-            stochastic_info.stochastics, stochastic_info.deterministics
+            posterior_info.posteriors, posterior_info.deterministics
         )
         reconstruction_observation_loss = reconstructed_observation_dist.log_prob(
             data.observation[:, 1:]
         )
 
         reward_dist = self.reward_predictor(
-            stochastic_info.stochastics, stochastic_info.deterministics
+            posterior_info.posteriors, posterior_info.deterministics
         )
         reward_loss = reward_dist.log_prob(data.reward[:, 1:])
 
         stochastic_dist = create_normal_dist(
-            stochastic_info.stochastic_dist_means,
-            stochastic_info.stochastic_dist_stds,
+            posterior_info.stochastic_dist_means,
+            posterior_info.stochastic_dist_stds,
             event_shape=1,
         )
-        stochastic_dist = create_normal_dist(
-            stochastic_info.stochastic_dist_means,
-            stochastic_info.stochastic_dist_stds,
+        posterior_dist = create_normal_dist(
+            posterior_info.posterior_dist_means,
+            posterior_info.posterior_dist_stds,
             event_shape=1,
         )
         kl_divergence_loss = torch.mean(
-            torch.distributions.kl.kl_divergence(stochastic_dist, stochastic_dist)
+            torch.distributions.kl.kl_divergence(posterior_dist, stochastic_dist)
         )
         kl_divergence_loss = torch.max(
             torch.tensor(self.config.free_nats).to(self.device), kl_divergence_loss
@@ -193,67 +196,40 @@ class Dreamer:
         return model_loss.item()
 
     def behavior_learning(self, states, deterministics):
-        # Redimensionnement des états stochastiques et déterministes pour les traiter
+        """
+        #TODO : last posterior truncation(last can be last step)
+        posterior shape : (batch, timestep, stochastic)
+        """
         state = states.reshape(-1, self.config.stochastic_size)
         deterministic = deterministics.reshape(-1, self.config.deterministic_size)
 
-        # Boucle sur l'horizon de temps défini pour l'apprentissage comportemental
+        # continue_predictor reinit
         for t in range(self.config.horizon_length):
-            # Utilisation de l'acteur pour déterminer l'action basée sur l'état actuel
             action = self.actor(state, deterministic)
-
-            # Mise à jour de l'état déterministe avec l'état stochastique actuel et l'action
             deterministic = self.rssm.recurrent_model(state, action, deterministic)
-
-            # Mise à jour de l'état stochastique pour le prochain pas de temps
             _, state = self.rssm.transition_model(deterministic)
-
-            # Enregistrement des informations d'état pour la mise à jour ultérieure de l'agent
             self.behavior_learning_infos.append(
                 priors=state, deterministics=deterministic
             )
 
-        # Mise à jour des politiques et valeurs de l'agent basée sur les informations enregistrées
         self._agent_update(self.behavior_learning_infos.get_stacked())
 
-    def compute_lambda_values(
-        self, rewards, values, continues, horizon_length, device, lambda_
-    ):
-        # Supprimer la dernière étape pour avoir les bonnes dimensions
-        rewards = rewards[:, :-1]
-        continues = continues[:, :-1]
-        next_values = values[:, 1:]
-        last = next_values[:, -1]
-
-        # Calcul des entrées pour le calcul des valeurs lambda
-        inputs = rewards + continues * next_values * (1 - lambda_)
-
-        outputs = []
-        # Calcul des valeurs lambda étape par étape (de la fin au début)
-        for index in reversed(range(horizon_length - 1)):
-            last = inputs[:, index] + continues[:, index] * lambda_ * last
-            outputs.append(last)
-
-        # Réorganiser les valeurs calculées dans l'ordre correct
-        returns = torch.stack(list(reversed(outputs)), dim=1).to(device)
-        return returns
-
     def _agent_update(self, behavior_learning_infos):
-        # Calcul des récompenses prédites
         predicted_rewards = self.reward_predictor(
             behavior_learning_infos.priors, behavior_learning_infos.deterministics
         ).mean
-
-        # Calcul des valeurs prédites
         values = self.critic(
             behavior_learning_infos.priors, behavior_learning_infos.deterministics
         ).mean
 
-        # Facteur de réduction qui atténue la valeur des récompenses futures.
-        continues = self.config.discount * torch.ones_like(values)
+        if self.config.use_continue_flag:
+            continues = self.continue_predictor(
+                behavior_learning_infos.priors, behavior_learning_infos.deterministics
+            ).mean
+        else:
+            continues = self.config.discount * torch.ones_like(values)
 
-        # lambda_values calcule une version ajustée des valeurs basée sur le facteur de réduction et les récompenses prédites.
-        lambda_values = self.compute_lambda_values(
+        lambda_values = compute_lambda_values(
             predicted_rewards,
             values,
             continues,
@@ -262,26 +238,30 @@ class Dreamer:
             self.config.lambda_,
         )
 
-        # Calcul de l'erreur de valeur
         actor_loss = -torch.mean(lambda_values)
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
+        nn.utils.clip_grad_norm_(
+            self.actor.parameters(),
+            self.config.clip_grad,
+            norm_type=self.config.grad_norm_type,
+        )
         self.actor_optimizer.step()
 
-        # Évaluation du modèle critique pour estimer les valeurs attendues.
-        # On utilise les informations sur les actions prises (priors) et les informations déterministes, détachées du graphe de calcul.
         value_dist = self.critic(
             behavior_learning_infos.priors.detach()[:, :-1],
             behavior_learning_infos.deterministics.detach()[:, :-1],
         )
-
-        # Calcul de la perte (loss) en comparant les valeurs prédites (value_dist) avec une autre distribution (lambda_values).
-        # La perte est calculée en utilisant la log-probabilité négative et en prenant la moyenne.
         value_loss = -torch.mean(value_dist.log_prob(lambda_values.detach()))
 
         self.critic_optimizer.zero_grad()
         value_loss.backward()
+        nn.utils.clip_grad_norm_(
+            self.critic.parameters(),
+            self.config.clip_grad,
+            norm_type=self.config.grad_norm_type,
+        )
         self.critic_optimizer.step()
 
     def save(self):
@@ -317,7 +297,7 @@ class Dreamer:
         self.num_total_episode = checkpoint["num_total_episode"]
 
     def play(self, env):
-        stochastic, deterministic = self.rssm.recurrent_model_input_init(1)
+        posterior, deterministic = self.rssm.recurrent_model_input_init(1)
         action = torch.zeros(1, self.action_size).to(self.device)
 
         observation = env.reset()
@@ -331,20 +311,18 @@ class Dreamer:
         while not done:
             env.render()
 
-            deterministic = self.rssm.recurrent_model(stochastic, action, deterministic)
+            deterministic = self.rssm.recurrent_model(posterior, action, deterministic)
             embedded_observation = embedded_observation.reshape(1, -1)
 
-            _, stochastic = self.rssm.representation_model(
+            _, posterior = self.rssm.representation_model(
                 embedded_observation, deterministic
             )
-            action = self.actor(stochastic, deterministic).detach()
+            action = self.actor(posterior, deterministic).detach()
 
             buffer_action = action.cpu().numpy()
             env_action = buffer_action.argmax()
 
             next_observation, reward, done, info = env.step(env_action)
-
-            print("next_observation :", next_observation.shape)
 
             score += reward
             embedded_observation = self.encoder(
@@ -359,64 +337,50 @@ class Dreamer:
 
     @torch.no_grad()
     def environment_interaction(self, env, num_interaction_episodes, train=True):
-        # Itère sur le nombre d'épisodes d'interaction avec l'environnement
         for _ in range(num_interaction_episodes):
-            # Initialise les états stochastique et déterministe du modèle
-            stochastic, deterministic = self.rssm.recurrent_model_input_init(1)
-            # Initialise une action vide
+            posterior, deterministic = self.rssm.recurrent_model_input_init(1)
             action = torch.zeros(1, self.action_size).to(self.device)
 
-            # Réinitialise l'environnement et obtient la première observation
             observation = env.reset()
             embedded_observation = self.encoder(
                 torch.from_numpy(observation.copy()).float().to(self.device)
             )
 
-            # Initialise le score et la liste de scores
             score = 0
             score_lst = np.array([])
             done = False
 
-            # Boucle tant que l'épisode n'est pas terminé
             while not done:
-                # Mise à jour du modèle stochastique et déterministe
                 deterministic = self.rssm.recurrent_model(
-                    stochastic, action, deterministic
+                    posterior, action, deterministic
                 )
                 embedded_observation = embedded_observation.reshape(1, -1)
 
-                # Mise à jour de l'état stochastique avec le modèle de représentation
-                _, stochastic = self.rssm.representation_model(
+                _, posterior = self.rssm.representation_model(
                     embedded_observation, deterministic
                 )
+                action = self.actor(posterior, deterministic).detach()
 
-                # Détermine l'action à prendre
-                action = self.actor(stochastic, deterministic).detach()
                 buffer_action = action.cpu().numpy()
                 env_action = buffer_action.argmax()
 
-                # Applique l'action à l'environnement et reçoit le prochain état et la récompense
                 next_observation, reward, done, info = env.step(env_action)
 
-                # Ajoute l'expérience au buffer si en mode entraînement
                 if train:
                     self.buffer.add(
                         observation, buffer_action, reward, next_observation, done
                     )
 
-                # Met à jour le score et l'observation
                 score += reward
                 embedded_observation = self.encoder(
                     torch.from_numpy(next_observation).float().to(self.device)
                 )
                 observation = next_observation
 
-                # Vérifie si l'épisode est terminé
                 done = (
                     done or info["flag_get"] or info["time"] == 0 or info["life"] == 0
                 )
 
-                # Si l'épisode est terminé, met à jour le score total ou la liste des scores
                 if done:
                     if train:
                         self.num_total_episode += 1
@@ -424,7 +388,6 @@ class Dreamer:
                         score_lst = np.append(score_lst, score)
                     break
 
-        # Affiche le score si en mode évaluation
         if not train:
             evaluate_score = score_lst.mean()
             print("evaluate score :", evaluate_score)

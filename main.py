@@ -22,7 +22,6 @@ def main(args):
     )
     env = JoypadSpace(env, SIMPLE_MOVEMENT)
     env = ChannelFirstEnv(env)
-
     env = SkipFrame(env, 1)
     env = PixelNormalization(env)
 

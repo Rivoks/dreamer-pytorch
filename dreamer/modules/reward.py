@@ -1,25 +1,30 @@
 import torch
 import torch.nn as nn
-from dreamer.utils.utils import build_network, create_normal_dist, horizontal_forward
+from dreamer.utils.utils import initialize_weights
 
 
-class Critic(nn.Module):
-    # Donne une estimation de la valeur pour évaluer les actions choisies par l'agent
+class RewardModel(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.config = config.parameters.dreamer.agent.critic
+        self.config = config.parameters.dreamer.reward
         self.stochastic_size = config.parameters.dreamer.stochastic_size
         self.deterministic_size = config.parameters.dreamer.deterministic_size
 
         self.network = nn.Sequential(
+            # On prend en entrée l'état stochastique et l'état déterministe qu'on projette dans un espace latent
             nn.Linear(
-                self.stochastic_size + self.deterministic_size, self.config.hidden_size
+                self.stochastic_size + self.deterministic_size,
+                self.config.hidden_size,
             ),
             nn.ELU(),
+            # Renforcer la capacité du modèle à apprendre des représentations efficaces
             nn.Linear(self.config.hidden_size, self.config.hidden_size),
             nn.ELU(),
+            # Prédiction de la récompense
             nn.Linear(self.config.hidden_size, 1),
         )
+
+        self.network.apply(initialize_weights)
 
     def forward(self, stochastic, deterministic):
         input_shape = (-1,)  # Taille variable

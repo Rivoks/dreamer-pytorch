@@ -15,11 +15,11 @@ environment:
 parameters:
   dreamer:
     save_path: output/model-low.pt
-    train_iterations: 100
+    train_iterations: 10
     horizon_length: 15
     batch_size: 32
     batch_length: 32
-    collect_interval: 10
+    collect_interval: 1
     num_interaction_episodes: 1
     seed_episodes: 1
     num_evaluate: 1
@@ -39,6 +39,7 @@ parameters:
     deterministic_size: 200
     stochastic_size: 30
     stochastic_state_size: 1024
+
     buffer:
       capacity: 500000
 
