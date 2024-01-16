@@ -19,7 +19,7 @@ parameters:
     horizon_length: 15
     batch_size: 36
     batch_length: 36
-    collect_interval: 50
+    collect_interval: 10
     num_interaction_episodes: 1
     seed_episodes: 5
     num_evaluate: 2
